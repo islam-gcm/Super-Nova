@@ -1,0 +1,10 @@
+{
+  "name": "supernova-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm ci --prefix backend && npm ci --prefix official-frontend && npm ci --prefix virtual-club-frontend",
+    "check": "npm run lint --prefix official-frontend && npm run check --prefix virtual-club-frontend",
+    "build": "npm run build --prefix official-frontend && npm run build --prefix virtual-club-frontend"
+  }
+}

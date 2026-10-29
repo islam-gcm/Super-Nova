@@ -1,0 +1,1263 @@
+openapi: 3.1.0
+info:
+  title: SuperNova Virtual Club API
+  version: 1.0.0
+  description: |
+    REST API for public club content, membership intake, account activation,
+    role-based administration, task collaboration, notifications, and ranking.
+servers:
+  - url: http://localhost:5000
+    description: Local development
+  - url: https://api.supernova.example
+    description: Production placeholder
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Registration
+  - name: Applications
+  - name: Departments
+  - name: Tasks
+  - name: Assignments
+  - name: Notifications
+  - name: Events
+  - name: Content
+  - name: Members
+  - name: Dashboard
+  - name: Audit
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Check database and transaction readiness
+      operationId: getHealth
+      responses:
+        '200':
+          description: API is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database is disconnected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Log in with an active account
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Sets the HTTP-only accessToken cookie and returns the user
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/auth/activate:
+    post:
+      tags: [Authentication]
+      summary: Activate an invited account with a one-time token
+      operationId: activateAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token, password]
+              properties:
+                token: { type: string, minLength: 20, maxLength: 200 }
+                password:
+                  type: string
+                  minLength: 10
+                  maxLength: 128
+                  pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$'
+      responses:
+        '201':
+          description: Account activated and authentication cookie set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Clear the authentication cookie
+      operationId: logout
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Return the current active user
+      operationId: getCurrentUser
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/registration/status:
+    get:
+      tags: [Registration]
+      summary: Get the effective public registration status
+      operationId: getRegistrationStatus
+      responses:
+        '200':
+          description: Registration status and schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistrationResponse' }
+    patch:
+      tags: [Registration]
+      summary: Set a manual registration override
+      description: Lead or HR only.
+      operationId: updateRegistrationStatus
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [isOpen]
+              properties:
+                isOpen: { type: boolean }
+      responses:
+        '200':
+          description: Updated status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistrationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/applications:
+    post:
+      tags: [Applications]
+      summary: Submit a membership application
+      operationId: createApplication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplicationInput' }
+      responses:
+        '201':
+          description: Pending application created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [Applications]
+      summary: List membership applications
+      description: Lead or HR only.
+      operationId: listApplications
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, accepted, rejected] }
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/applications/{id}/decision:
+    patch:
+      tags: [Applications]
+      summary: Accept or reject a pending application
+      description: Lead or HR only. Acceptance requires a departmentId.
+      operationId: decideApplication
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [accepted, rejected] }
+                note: { type: string, maxLength: 1000 }
+                departmentId: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200':
+          description: Decision, optional invited user, and emailDelivered flag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationDecisionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/departments:
+    get:
+      tags: [Departments]
+      summary: List active departments
+      operationId: listPublicDepartments
+      responses:
+        '200':
+          description: Active departments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentListResponse' }
+    post:
+      tags: [Departments]
+      summary: Create a department
+      description: Lead or HR only.
+      operationId: createDepartment
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DepartmentInput' }
+      responses:
+        '201':
+          description: Department created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/departments/admin:
+    get:
+      tags: [Departments]
+      summary: List active and inactive departments
+      description: Lead or HR only.
+      operationId: listAdminDepartments
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: All departments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/departments/{id}:
+    patch:
+      tags: [Departments]
+      summary: Update a department
+      description: Lead or HR only.
+      operationId: updateDepartment
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/DepartmentInput'
+              minProperties: 1
+      responses:
+        '200':
+          description: Department updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/departments/{id}/heads:
+    put:
+      tags: [Departments]
+      summary: Replace a department's head list
+      description: Lead or HR only. Every supplied user must be active.
+      operationId: setDepartmentHeads
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userIds]
+              properties:
+                userIds:
+                  type: array
+                  maxItems: 20
+                  uniqueItems: true
+                  items: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200':
+          description: Department and synchronized users updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks visible to the current user
+      operationId: listTasks
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TaskStatus' }
+        - name: type
+          in: query
+          schema: { type: string, enum: [global, department] }
+        - name: departmentId
+          in: query
+          schema: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Tasks]
+      summary: Create a task
+      description: Lead/HR may create any task. Department heads are scoped.
+      operationId: createTask
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskInput' }
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/tasks/{id}:
+    get:
+      tags: [Tasks]
+      summary: Get one visible task and the current user's assignment
+      operationId: getTask
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tasks/{id}/claims:
+    post:
+      tags: [Tasks]
+      summary: Claim an available task atomically
+      operationId: claimTask
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '201':
+          description: Assignment claimed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/tasks/{id}/claims/me:
+    delete:
+      tags: [Tasks]
+      summary: Leave the current user's task claim
+      operationId: leaveTask
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Assignment left and capacity reopened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/tasks/{id}/submissions:
+    post:
+      tags: [Tasks]
+      summary: Submit work for the current user's claim
+      operationId: submitTask
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 3, maxLength: 3000 }
+                url: { type: string, format: uri, maxLength: 2000 }
+      responses:
+        '200':
+          description: Assignment submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/task-assignments:
+    get:
+      tags: [Assignments]
+      summary: List the scoped assignment review queue
+      description: Lead, HR, or department head only.
+      operationId: listAssignments
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/AssignmentStatus' }
+        - name: taskId
+          in: query
+          schema: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/task-assignments/{id}/review:
+    patch:
+      tags: [Assignments]
+      summary: Approve or reject a submitted assignment
+      operationId: reviewAssignment
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                note: { type: string, maxLength: 2000 }
+      responses:
+        '200':
+          description: Assignment reviewed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List the current user's notifications
+      operationId: listNotifications
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark an owned notification as read
+      operationId: markNotificationRead
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/events:
+    get:
+      tags: [Events]
+      summary: List published events
+      operationId: listPublicEvents
+      responses:
+        '200':
+          description: Published events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventListResponse' }
+    post:
+      tags: [Events]
+      summary: Create an event, workshop, or announcement
+      description: Lead or HR only.
+      operationId: createEvent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventInput' }
+      responses:
+        '201':
+          description: Event created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/events/admin:
+    get:
+      tags: [Events]
+      summary: List all event statuses
+      description: Lead or HR only.
+      operationId: listAdminEvents
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: All events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/events/{id}:
+    patch:
+      tags: [Events]
+      summary: Update or publish an event
+      description: Lead or HR only.
+      operationId: updateEvent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{ $ref: '#/components/schemas/EventInput' }]
+              minProperties: 1
+      responses:
+        '200':
+          description: Event updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/content/{kind}:
+    get:
+      tags: [Content]
+      summary: List public leaders or achievements
+      operationId: listPublicContent
+      parameters: [{ $ref: '#/components/parameters/ContentKind' }]
+      responses:
+        '200':
+          description: Ordered content items
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Content]
+      summary: Create a leader or achievement
+      description: Lead or HR only.
+      operationId: createContent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ContentKind' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContentInput' }
+      responses:
+        '201':
+          description: Content item created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/content/{kind}/admin:
+    get:
+      tags: [Content]
+      summary: List content for administration
+      description: Lead or HR only.
+      operationId: listAdminContent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ContentKind' }]
+      responses:
+        '200':
+          description: Ordered content items
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/content/{kind}/{id}:
+    patch:
+      tags: [Content]
+      summary: Update a leader or achievement
+      description: Lead or HR only.
+      operationId: updateContent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentKind'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{ $ref: '#/components/schemas/ContentInput' }]
+              minProperties: 1
+      responses:
+        '200':
+          description: Content item updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Content]
+      summary: Delete a leader or achievement
+      description: Lead or HR only.
+      operationId: deleteContent
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentKind'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Deleted content item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/users:
+    get:
+      tags: [Members]
+      summary: List members and invited accounts
+      description: Lead or HR only.
+      operationId: listUsers
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/users/{id}:
+    patch:
+      tags: [Members]
+      summary: Update roles, departments, or account status
+      description: Lead or HR only. Cannot remove or suspend the final active Lead.
+      operationId: updateUserAccess
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                roles:
+                  type: array
+                  minItems: 1
+                  maxItems: 3
+                  uniqueItems: true
+                  items: { type: string, enum: [lead, hr, member] }
+                departmentIds:
+                  type: array
+                  maxItems: 20
+                  uniqueItems: true
+                  items: { $ref: '#/components/schemas/ObjectId' }
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        '200':
+          description: User access updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Get the current member dashboard
+      operationId: getDashboard
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/leaderboard:
+    get:
+      tags: [Dashboard]
+      summary: Rank active members by approved assignment history
+      operationId: getLeaderboard
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: Top 100 leaderboard entries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeaderboardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/audit-logs:
+    get:
+      tags: [Audit]
+      summary: List sensitive administrative actions
+      description: Lead or HR only.
+      operationId: listAuditLogs
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/PaginatedSuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: accessToken
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    ContentKind:
+      name: kind
+      in: path
+      required: true
+      schema: { type: string, enum: [leader, achievement] }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  responses:
+    Success:
+      description: Successful request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SuccessResponse' }
+    PaginatedSuccess:
+      description: Successful paginated request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PaginatedResponse' }
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing, invalid, expired, or unavailable account session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Authenticated user or origin lacks permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found or outside user scope
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Current resource state prevents the operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: Input or domain validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    ObjectId:
+      type: string
+      pattern: '^[a-fA-F0-9]{24}$'
+      examples: [66c01234567890abcdef1234]
+    SuccessResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data: { type: object, additionalProperties: true }
+    PaginatedResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          required: [meta]
+          properties:
+            meta: { $ref: '#/components/schemas/PaginationMeta' }
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, const: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, examples: [VALIDATION_ERROR] }
+            message: { type: string }
+            details: {}
+    PaginationMeta:
+      type: object
+      required: [page, limit, total, pages]
+      properties:
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        pages: { type: integer, minimum: 0 }
+    HealthResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          required: [status, database, transactions]
+          properties:
+            status: { type: string, enum: [ok, degraded] }
+            database: { type: string, enum: [connected, disconnected] }
+            transactions: { type: string, enum: [available, unavailable] }
+    User:
+      type: object
+      required: [_id, fullName, email, roles, departments, status, points, completedTasksCount]
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        id: { type: string }
+        fullName: { type: string, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        phone: { type: string, maxLength: 30 }
+        roles:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [lead, hr, department_head, member] }
+        departments:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/ObjectId'
+              - $ref: '#/components/schemas/DepartmentSummary'
+        status: { type: string, enum: [invited, active, suspended] }
+        points: { type: integer, minimum: 0 }
+        completedTasksCount: { type: integer, minimum: 0 }
+        lastLoginAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UserResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+    DepartmentSummary:
+      type: object
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        name: { type: string }
+        slug: { type: string }
+    Department:
+      allOf:
+        - $ref: '#/components/schemas/DepartmentSummary'
+        - type: object
+          properties:
+            description: { type: string, maxLength: 1000 }
+            imageUrl: { type: string, maxLength: 60000 }
+            heads:
+              type: array
+              items:
+                oneOf:
+                  - $ref: '#/components/schemas/ObjectId'
+                  - $ref: '#/components/schemas/User'
+            isActive: { type: boolean, default: true }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    DepartmentInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        slug:
+          type: string
+          maxLength: 100
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        description: { type: string, maxLength: 1000 }
+        imageUrl: { type: string, maxLength: 60000 }
+        isActive: { type: boolean }
+    DepartmentResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            department: { $ref: '#/components/schemas/Department' }
+    DepartmentListResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            departments:
+              type: array
+              items: { $ref: '#/components/schemas/Department' }
+    ApplicationInput:
+      type: object
+      additionalProperties: false
+      required: [fullName, email, phone, fieldOfStudy, motivation]
+      properties:
+        fullName: { type: string, minLength: 2, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        phone: { type: string, minLength: 5, maxLength: 30 }
+        fieldOfStudy: { type: string, minLength: 2, maxLength: 160 }
+        university: { type: string, maxLength: 160 }
+        motivation: { type: string, minLength: 20, maxLength: 3000 }
+        skills:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 80 }
+        interests:
+          type: array
+          maxItems: 30
+          items: { type: string, minLength: 1, maxLength: 80 }
+        preferredDepartment: { $ref: '#/components/schemas/ObjectId' }
+        weeklyMeetingPreference: { type: string, enum: [yes, no] }
+        availableTimes:
+          type: array
+          maxItems: 3
+          items: { type: string, enum: [morning, afternoon, evening] }
+        favoriteCosmicPhenomenon: { type: string, maxLength: 3000 }
+    Application:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationInput'
+        - type: object
+          required: [_id, status]
+          properties:
+            _id: { $ref: '#/components/schemas/ObjectId' }
+            status: { type: string, enum: [pending, accepted, rejected] }
+            reviewedBy:
+              oneOf:
+                - $ref: '#/components/schemas/ObjectId'
+                - $ref: '#/components/schemas/User'
+            reviewedAt: { type: string, format: date-time }
+            decisionNote: { type: string, maxLength: 1000 }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ApplicationResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            application: { $ref: '#/components/schemas/Application' }
+    ApplicationDecisionResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            application: { $ref: '#/components/schemas/Application' }
+            user:
+              oneOf:
+                - $ref: '#/components/schemas/User'
+                - type: 'null'
+            emailDelivered: { type: boolean }
+    RegistrationStatus:
+      type: object
+      required: [isOpen, mode, scheduleIsOpen, nextOpeningDate, windowText]
+      properties:
+        isOpen: { type: boolean }
+        mode: { type: string, enum: [manual, schedule] }
+        scheduleIsOpen: { type: boolean }
+        nextOpeningDate: { type: string }
+        windowText: { type: string }
+        updatedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+    RegistrationResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            registration: { $ref: '#/components/schemas/RegistrationStatus' }
+    TaskStatus:
+      type: string
+      enum: [open, filled, in_progress, submitted, completed, cancelled]
+    TaskInput:
+      type: object
+      additionalProperties: false
+      required: [title, description, type, deadline, maxAssignees]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 180 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        type: { type: string, enum: [global, department] }
+        departmentId: { $ref: '#/components/schemas/ObjectId' }
+        deadline: { type: string, format: date-time }
+        maxAssignees: { type: integer, minimum: 1, maximum: 100 }
+        points: { type: integer, minimum: 0, maximum: 10000, default: 10 }
+        notes: { type: string, maxLength: 3000 }
+    Task:
+      type: object
+      required: [_id, title, description, type, deadline, maxAssignees, assignedCount, status, points]
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        title: { type: string }
+        description: { type: string }
+        type: { type: string, enum: [global, department] }
+        department:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - $ref: '#/components/schemas/DepartmentSummary'
+        createdBy:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - $ref: '#/components/schemas/User'
+        deadline: { type: string, format: date-time }
+        maxAssignees: { type: integer }
+        assignedCount: { type: integer, minimum: 0 }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        points: { type: integer, minimum: 0 }
+        notes: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TaskResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            task: { $ref: '#/components/schemas/Task' }
+    AssignmentStatus:
+      type: string
+      enum: [claimed, left, submitted, approved, rejected]
+    Assignment:
+      type: object
+      required: [_id, task, member, status, claimedAt]
+      properties:
+        _id: { $ref: '#/components/schemas/ObjectId' }
+        task:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - $ref: '#/components/schemas/Task'
+        member:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - $ref: '#/components/schemas/User'
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        claimedAt: { type: string, format: date-time }
+        leftAt: { type: string, format: date-time }
+        submittedAt: { type: string, format: date-time }
+        submissionNote: { type: string, maxLength: 3000 }
+        submissionUrl: { type: string, format: uri }
+        reviewedBy:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - $ref: '#/components/schemas/User'
+        reviewedAt: { type: string, format: date-time }
+        reviewNote: { type: string, maxLength: 2000 }
+    AssignmentResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            assignment: { $ref: '#/components/schemas/Assignment' }
+    EventInput:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 3, maxLength: 180 }
+        slug:
+          type: string
+          maxLength: 180
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        type: { type: string, enum: [workshop, event, announcement] }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        location: { type: string, maxLength: 300 }
+        status: { type: string, enum: [draft, published, archived], default: draft }
+        coverImage: { type: string, maxLength: 60000 }
+        tag: { type: string, maxLength: 80 }
+        subtitle: { type: string, maxLength: 180 }
+        presenterName: { type: string, maxLength: 160 }
+        link: { type: string, format: uri, maxLength: 2000 }
+    Event:
+      allOf:
+        - $ref: '#/components/schemas/EventInput'
+        - type: object
+          properties:
+            _id: { $ref: '#/components/schemas/ObjectId' }
+            createdBy:
+              oneOf:
+                - $ref: '#/components/schemas/ObjectId'
+                - $ref: '#/components/schemas/User'
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    EventResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            event: { $ref: '#/components/schemas/Event' }
+    EventListResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/Event' }
+    ContentInput:
+      type: object
+      additionalProperties: false
+      properties:
+        roleTag: { type: string, maxLength: 80 }
+        fullName: { type: string, maxLength: 120 }
+        subtitleRole: { type: string, maxLength: 160 }
+        title: { type: string, maxLength: 180 }
+        subtitle: { type: string, maxLength: 180 }
+        description: { type: string, maxLength: 5000 }
+        imageUrl: { type: string, maxLength: 60000 }
+        link: { type: string, format: uri, maxLength: 2000 }
+        sortOrder: { type: integer, minimum: 0, maximum: 100000, default: 0 }
+    SiteContent:
+      allOf:
+        - $ref: '#/components/schemas/ContentInput'
+        - type: object
+          properties:
+            _id: { $ref: '#/components/schemas/ObjectId' }
+            kind: { type: string, enum: [leader, achievement] }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ContentResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            item: { $ref: '#/components/schemas/SiteContent' }
+    ContentListResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/SiteContent' }
+    LeaderboardEntry:
+      type: object
+      required: [rank, memberId, fullName, points, completedTasks]
+      properties:
+        rank: { type: integer, minimum: 1 }
+        memberId: { $ref: '#/components/schemas/ObjectId' }
+        fullName: { type: string }
+        points: { type: integer, minimum: 0 }
+        completedTasks: { type: integer, minimum: 0 }
+    LeaderboardResponse:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          properties:
+            leaderboard:
+              type: array
+              maxItems: 100
+              items: { $ref: '#/components/schemas/LeaderboardEntry' }
